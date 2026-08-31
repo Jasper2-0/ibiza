@@ -186,21 +186,31 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
     return value - Math.floor(value);
   }
 
-  async function loadImage(url) {
-    const response = await fetch(url);
+  async function fetchBlob(url, signal) {
+    const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`Could not load ${url}`);
+    return response.blob();
+  }
+
+  function startBlobLoad(url, signal) {
+    const load = fetchBlob(url, signal);
+    // A later asset can fail before the ordered decoder reaches it. Attach a
+    // handler now while retaining the original rejection for that later await.
+    void load.catch(() => {});
+    return load;
+  }
+
+  async function loadImage(url, blobLoad = fetchBlob(url)) {
     // The embedded IJG 6b decoder ignored the Photoshop ICC profiles in these
     // JPEGs. Disable browser color conversion to preserve the same RGB samples.
-    return createImageBitmap(await response.blob(), {
+    return createImageBitmap(await blobLoad, {
       colorSpaceConversion: 'none',
       premultiplyAlpha: 'none'
     });
   }
 
-  async function loadPCX(url) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Could not load ${url}`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
+  async function loadPCX(url, blobLoad = fetchBlob(url)) {
+    const bytes = new Uint8Array(await (await blobLoad).arrayBuffer());
     if (bytes.length < 897 || bytes[0] !== 10 || bytes[2] !== 1 || bytes[3] !== 8) {
       throw new Error(`Unsupported PCX format in ${url}`);
     }
@@ -355,13 +365,35 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
       this.x7Strip = null;
       this.earlyTransitions = null;
       this.assetScratch = null;
+      this.loadAbortController = null;
     }
 
     async load() {
-      // The release performs this entire sequence synchronously: decode one
-      // asset, present its progress frame, then continue. Keep the same order
-      // here instead of hiding parallel browser requests behind a fake meter.
-      const loadingImage = await loadImage('data/x1.jpg');
+      this.loadAbortController?.abort();
+      const loadController = new AbortController();
+      this.loadAbortController = loadController;
+      const assetBlobs = new Map();
+      try {
+        await this.loadAssets(loadController, assetBlobs);
+      } catch (error) {
+        loadController.abort();
+        throw error;
+      } finally {
+        assetBlobs.clear();
+        if (this.loadAbortController === loadController) {
+          this.loadAbortController = null;
+        }
+      }
+    }
+
+    async loadAssets(loadController, assetBlobs) {
+      const { signal } = loadController;
+
+      // Get the original loading artwork on screen first. The remaining files
+      // then transfer together while decoding and preparation retain the
+      // executable's order and real progress checkpoints.
+      const loadingImage = await loadImage(
+        'data/x1.jpg', fetchBlob('data/x1.jpg', signal));
       const loadingSource = makeCanvas(WIDTH, HEIGHT);
       try {
         loadingSource.ctx.drawImage(loadingImage, 0, 0, WIDTH, HEIGHT);
@@ -374,9 +406,22 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
       updateLoadingPreview(this.loading);
       await new Promise(resolve => requestAnimationFrame(resolve));
 
+      const imageURLs = Object.values(FILES);
+      const pcxPosition = imageURLs.indexOf(FILES.x19) + 1;
+      const assetURLs = new Set([
+        ...imageURLs.slice(0, pcxPosition),
+        'data/x26.pcx',
+        ...imageURLs.slice(pcxPosition),
+        AUDIO_URL
+      ]);
+      for (const url of assetURLs) {
+        assetBlobs.set(url, startBlobLoad(url, signal));
+      }
+      const blobFor = url => assetBlobs.get(url);
+
       let progressIndex = 1;
       const decode = async (name, retain = true) => {
-        const image = await loadImage(FILES[name]);
+        const image = await loadImage(FILES[name], blobFor(FILES[name]));
         if (retain) this.images[name] = image;
         else image.close?.();
         await this.presentLoadingProgress(progressIndex++);
@@ -391,7 +436,8 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
         'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19'
       ]) await decode(name);
 
-      this.images.x26pcx = await loadPCX('data/x26.pcx');
+      this.images.x26pcx = await loadPCX(
+        'data/x26.pcx', blobFor('data/x26.pcx'));
       await this.presentLoadingProgress(progressIndex++);
       for (const name of ['x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27']) {
         await decode(name);
@@ -438,7 +484,7 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
       await this.presentLoadingProgress(progressIndex++);
       await this.presentLoadingProgress(progressIndex++); // Native .87 call.
 
-      this.images.bob = await loadImage(FILES.bob);
+      this.images.bob = await loadImage(FILES.bob, blobFor(FILES.bob));
       this.prepareIntroAndComic();
       await this.presentLoadingProgress(progressIndex++);
 
@@ -452,9 +498,7 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
       await this.presentLoadingProgress(progressIndex++);
       await this.presentLoadingProgress(progressIndex++); // Native .97 call.
 
-      const response = await fetch(AUDIO_URL);
-      if (!response.ok) throw new Error(`Could not load ${AUDIO_URL}`);
-      this.audioBytes = await response.arrayBuffer();
+      this.audioBytes = await (await blobFor(AUDIO_URL)).arrayBuffer();
       await this.loadMusic();
       await this.presentLoadingProgress(progressIndex++);
       if (progressIndex !== LOADING_PROGRESS_SEQUENCE.length) {
