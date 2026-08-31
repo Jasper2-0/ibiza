@@ -202,10 +202,32 @@
       }
 
       .gate__row {
+        position: relative;
         margin-top: 38px;
       }
 
+      .gate__loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        z-index: 0;
+        display: block;
+        width: 180px;
+        height: 180px;
+        image-rendering: auto;
+        mix-blend-mode: plus-lighter;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+      }
+
+      .gate--ready .gate__loading,
+      .gate--error .gate__loading {
+        display: none;
+      }
+
       .gate__button {
+        position: relative;
+        z-index: 1;
         padding: 6px 2px;
         border: 0;
         outline: 0;
@@ -453,6 +475,7 @@
             <b>derpiipo</b> graphics
           </div>
           <div class="gate__row">
+            <canvas id="loading-preview" class="gate__loading" width="240" height="240" aria-hidden="true"></canvas>
             <button id="start" class="gate__button" type="button" disabled>LOADING</button>
           </div>
         </div>

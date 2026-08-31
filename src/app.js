@@ -24,6 +24,7 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
   const WIDTH = 512;
   const HEIGHT = 384;
   const AUDIO_URL = 'data/atbia3.xm';
+  const LOADING_PREVIEW = Object.freeze({ x: 264, y: 24, size: 240 });
 
   // Presented callback boundary fitted to the released 60 Hz capture. BASS's
   // mixer reaches order 9 row 0 at frame 2,777,040 (62.971428571 s); the
@@ -148,7 +149,14 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
   const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   const gate = document.querySelector('#gate');
   const startButton = document.querySelector('#start');
+  const loadingPreview = document.querySelector('#loading-preview');
+  const loadingPreviewContext = loadingPreview.getContext('2d', { alpha: false });
   const status = document.querySelector('#status');
+
+  function updateLoadingPreview(loading) {
+    const { x, y, size } = LOADING_PREVIEW;
+    loading.writeProgressLayer(loadingPreviewContext, x, y, size);
+  }
 
   function makeCanvas(width, height) {
     const result = document.createElement('canvas');
@@ -363,6 +371,7 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
       this.loading = new LoadingEffect(
         loadingSource.ctx.getImageData(0, 0, WIDTH, HEIGHT));
       this.loading.renderSequenceIndex(ctx, 0);
+      updateLoadingPreview(this.loading);
       await new Promise(resolve => requestAnimationFrame(resolve));
 
       let progressIndex = 1;
@@ -458,6 +467,7 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
       }
       this.assetScratch = null;
       this.loading = null;
+      gate.classList.add('gate--ready');
       startButton.disabled = false;
       startButton.textContent = 'START';
       status.textContent = '';
@@ -568,6 +578,7 @@ import { LoadingEffect, LOADING_PROGRESS_SEQUENCE } from './loading-effect.js';
         throw new RangeError(`Native loading progress index ${index} is invalid`);
       }
       this.loading.renderSequenceIndex(ctx, index);
+      updateLoadingPreview(this.loading);
       await new Promise(resolve => requestAnimationFrame(resolve));
     }
 

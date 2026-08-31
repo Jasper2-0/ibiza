@@ -52,6 +52,7 @@ export class LoadingEffect {
     this.base = packedFromImageData(source);
     this.frame = new Uint32Array(PIXELS);
     this.imageByContext = new WeakMap();
+    this.progressImageByContext = new WeakMap();
     this.reset();
   }
 
@@ -200,6 +201,34 @@ export class LoadingEffect {
       image.data[offset + 1] = (color >>> 8) & 255;
       image.data[offset + 2] = color & 255;
       image.data[offset + 3] = 255;
+    }
+    context.putImageData(image, 0, 0);
+  }
+
+  writeProgressLayer(context, sourceX, sourceY, size) {
+    if (!Number.isInteger(sourceX) || !Number.isInteger(sourceY) ||
+        !Number.isInteger(size) || size <= 0 || sourceX < 0 || sourceY < 0 ||
+        sourceX + size > WIDTH || sourceY + size > HEIGHT) {
+      throw new RangeError('loading progress crop is out of range');
+    }
+    let image = this.progressImageByContext.get(context);
+    if (!image || image.width !== size || image.height !== size) {
+      image = context.createImageData(size, size);
+      this.progressImageByContext.set(context, image);
+    }
+
+    // Isolate the light added by the native renderer. This exposes the exact
+    // scratch-circle geometry without carrying x1 into the launcher.
+    for (let y = 0, offset = 0; y < size; y++) {
+      let pixel = (sourceY + y) * WIDTH + sourceX;
+      for (let x = 0; x < size; x++, pixel++, offset += 4) {
+        const current = this.frame[pixel];
+        const base = this.base[pixel];
+        image.data[offset] = ((current >>> 16) & 255) - ((base >>> 16) & 255);
+        image.data[offset + 1] = ((current >>> 8) & 255) - ((base >>> 8) & 255);
+        image.data[offset + 2] = (current & 255) - (base & 255);
+        image.data[offset + 3] = 255;
+      }
     }
     context.putImageData(image, 0, 0);
   }
